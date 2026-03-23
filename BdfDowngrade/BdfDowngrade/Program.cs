@@ -7,6 +7,8 @@
 //   4. Per-glyph SWIDTH1/DWIDTH1/VVECTOR lines (vertical metrics, BDF 2.2-only) are removed
 //   5. Glyphs that relied on global SWIDTH/DWIDTH defaults get explicit SWIDTH/DWIDTH
 //      lines inserted before their BBX line
+//   6. STARTCHAR glyph names are replaced with 4-digit uppercase hex of the ENCODING value
+//      (e.g. "STARTCHAR space" + "ENCODING 32" becomes "STARTCHAR 0020")
 
 if (args.Length < 2)
 {
@@ -39,6 +41,7 @@ using (var reader = new StreamReader(inputPath))
 // Second pass: write the downgraded BDF 2.1 file.
 bool inGlyph = false;
 bool glyphHasSwidth = false;
+bool pendingStartChar = false;  // STARTCHAR has been seen; waiting for ENCODING to emit it
 
 using var inputStream = new StreamReader(inputPath);
 using var outputStream = new StreamWriter(outputPath);
@@ -62,10 +65,28 @@ while ((inputLine = inputStream.ReadLine()) != null)
     {
         inGlyph = true;
         glyphHasSwidth = false;
+        // 6. Buffer STARTCHAR; the name will be replaced with the hex ENCODING value.
+        pendingStartChar = true;
+        continue;
     }
     else if (inputLine.StartsWith("ENDCHAR", StringComparison.Ordinal))
     {
         inGlyph = false;
+    }
+
+    // 6 (continued). Emit the buffered STARTCHAR using the ENCODING value as a 4-digit hex name.
+    if (pendingStartChar && inputLine.StartsWith("ENCODING ", StringComparison.Ordinal))
+    {
+        string encodingValue = inputLine.Substring("ENCODING ".Length).Trim();
+        if (encodingValue.Length > 0 && int.TryParse(encodingValue, out int codePoint))
+            outputStream.WriteLine($"STARTCHAR {codePoint:X4}");
+        else
+        {
+            Console.Error.WriteLine($"Warning: could not parse ENCODING value '{encodingValue}'; STARTCHAR name left as-is.");
+            outputStream.WriteLine($"STARTCHAR {encodingValue}");
+        }
+        pendingStartChar = false;
+        // Fall through to also write the ENCODING line.
     }
 
     // 3. Drop global header SWIDTH/DWIDTH/SWIDTH1/DWIDTH1/VVECTOR lines
