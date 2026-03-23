@@ -1,7 +1,7 @@
 ﻿// BDF font file tool: downgrade BDF 2.2 to 2.1, or merge two BDF 2.1 files.
 //
 // Usage:
-//   BdfDowngrade <input.bdf> <output.bdf>
+//   BdfDowngrade downgrade <input.bdf> <output.bdf>
 //       Downgrade: converts BDF version 2.2 to version 2.1.
 //
 //   BdfDowngrade merge <input1.bdf> <input2.bdf> <output.bdf>
@@ -29,15 +29,23 @@ if (args.Length >= 1 && args[0] == "merge")
     return MergeBdfFiles(args[1], args[2], args[3]);
 }
 
-if (args.Length < 2)
+if (args.Length >= 1 && args[0] == "downgrade")
 {
-    Console.Error.WriteLine("Usage: BdfDowngrade <input.bdf> <output.bdf>");
+    if (args.Length != 3)
+    {
+        Console.Error.WriteLine("Usage: BdfDowngrade downgrade <input.bdf> <output.bdf>");
+        return 1;
+    }
+}
+else
+{
+    Console.Error.WriteLine("Usage: BdfDowngrade downgrade <input.bdf> <output.bdf>");
     Console.Error.WriteLine("       BdfDowngrade merge <input1.bdf> <input2.bdf> <output.bdf>");
     return 1;
 }
 
-string inputPath = args[0];
-string outputPath = args[1];
+string inputPath = args[1];
+string outputPath = args[2];
 
 // First pass: collect the global SWIDTH/DWIDTH defaults from the file header
 // (lines before STARTPROPERTIES that set defaults for glyphs missing their own).
