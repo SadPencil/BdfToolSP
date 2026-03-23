@@ -1,6 +1,15 @@
-﻿// BDF font file downgrade tool: converts BDF version 2.2 to version 2.1.
+﻿// BDF font file tool: downgrade BDF 2.2 to 2.1, or merge two BDF 2.1 files.
 //
-// Key differences handled:
+// Usage:
+//   BdfDowngrade <input.bdf> <output.bdf>
+//       Downgrade: converts BDF version 2.2 to version 2.1.
+//
+//   BdfDowngrade merge <input1.bdf> <input2.bdf> <output.bdf>
+//       Merge: combines two BDF 2.1 files into one. Glyphs from the first file
+//       take precedence when both files define the same encoding. Aborts if
+//       either input is not BDF 2.1.
+//
+// Downgrade transformations:
 //   1. STARTFONT version line changed from 2.2 to 2.1
 //   2. METRICSSET keyword (BDF 2.2-only) is removed
 //   3. Global SWIDTH/DWIDTH/SWIDTH1/DWIDTH1/VVECTOR lines in the header are removed
@@ -10,9 +19,20 @@
 //   6. STARTCHAR glyph names are replaced with 4-digit uppercase hex of the ENCODING value
 //      (e.g. "STARTCHAR space" + "ENCODING 32" becomes "STARTCHAR 0020")
 
+if (args.Length >= 1 && args[0] == "merge")
+{
+    if (args.Length != 4)
+    {
+        Console.Error.WriteLine("Usage: BdfDowngrade merge <input1.bdf> <input2.bdf> <output.bdf>");
+        return 1;
+    }
+    return MergeBdfFiles(args[1], args[2], args[3]);
+}
+
 if (args.Length < 2)
 {
     Console.Error.WriteLine("Usage: BdfDowngrade <input.bdf> <output.bdf>");
+    Console.Error.WriteLine("       BdfDowngrade merge <input1.bdf> <input2.bdf> <output.bdf>");
     return 1;
 }
 
@@ -123,3 +143,168 @@ while ((inputLine = inputStream.ReadLine()) != null)
 }
 
 return 0;
+
+// ========== Merge command implementation ==========
+
+// Parses a BDF 2.1 file into its header lines and a dictionary of glyph line-blocks.
+//
+// headerLines receives every line from STARTFONT through CHARS N (inclusive).
+// glyphs maps each glyph's ENCODING integer to its line-block (STARTCHAR…ENDCHAR).
+//   Glyphs with ENCODING -1 (unmapped) get unique negative keys starting at -2 so
+//   they are all retained without colliding.
+// nextUnmappedKey is set to the next available unique negative key after all parsed glyphs.
+// Returns false (and prints a diagnostic) when the file cannot be read or is not BDF 2.1.
+bool TryParseBdf(string path, out List<string> headerLines, out Dictionary<int, List<string>> glyphs,
+                 out int nextUnmappedKey)
+{
+    headerLines = [];
+    glyphs = [];
+    nextUnmappedKey = -2;
+    string? line;
+    try
+    {
+        using var reader = new StreamReader(path);
+
+        // Validate that the first line declares BDF version 2.1.
+        line = reader.ReadLine()?.TrimEnd();
+        if (line == null || line != "STARTFONT 2.1")
+        {
+            Console.Error.WriteLine($"Error: '{path}' is not a BDF 2.1 file.");
+            return false;
+        }
+        headerLines.Add(line);
+
+        // Read header lines until the first STARTCHAR or ENDFONT.
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (line.StartsWith("STARTCHAR ", StringComparison.Ordinal) ||
+                line.StartsWith("ENDFONT", StringComparison.Ordinal))
+                break;
+            headerLines.Add(line);
+        }
+
+        if (line == null || line.StartsWith("ENDFONT", StringComparison.Ordinal))
+            return true;  // File has no glyph section.
+
+        // Parse each glyph block (STARTCHAR … ENDCHAR).
+        int unmappedKey = -2;  // Unique keys for ENCODING -1 glyphs.
+        string? startCharLine = line;
+        while (startCharLine != null)
+        {
+            var glyphLines = new List<string> { startCharLine };
+            int encoding = -1;
+
+            while ((line = reader.ReadLine()) != null)
+            {
+                glyphLines.Add(line);
+                if (encoding == -1 && line.StartsWith("ENCODING ", StringComparison.Ordinal))
+                {
+                    string val = line["ENCODING ".Length..].Trim();
+                    if (int.TryParse(val, out int enc))
+                        encoding = enc;
+                }
+                if (line.StartsWith("ENDCHAR", StringComparison.Ordinal))
+                    break;
+            }
+
+            // Assign a unique key: non-negative encodings use their value;
+            // ENCODING -1 glyphs (unmapped) get a unique negative key.
+            int key = (encoding == -1) ? unmappedKey-- : encoding;
+            glyphs.TryAdd(key, glyphLines);
+
+            // Advance to the next STARTCHAR or stop at ENDFONT / EOF.
+            startCharLine = null;
+            while ((line = reader.ReadLine()) != null)
+            {
+                if (line.StartsWith("STARTCHAR ", StringComparison.Ordinal))
+                {
+                    startCharLine = line;
+                    break;
+                }
+                if (line.StartsWith("ENDFONT", StringComparison.Ordinal))
+                    break;
+            }
+        }
+        nextUnmappedKey = unmappedKey;
+    }
+    catch (IOException ex)
+    {
+        Console.Error.WriteLine($"Error reading '{path}': {ex.Message}");
+        return false;
+    }
+    return true;
+}
+
+int MergeBdfFiles(string input1Path, string input2Path, string outputPath)
+{
+    if (!TryParseBdf(input1Path, out var header1, out var glyphs1, out int nextUnmappedKey))
+        return 1;
+    if (!TryParseBdf(input2Path, out _, out var glyphs2, out _))
+        return 1;
+
+    // Merge glyphs: file1 takes precedence on encoding conflicts.
+    // ENCODING -1 glyphs from file2 always get unique negative keys so they are retained.
+    int unmappedKey2 = nextUnmappedKey - 1;
+    var merged = new Dictionary<int, List<string>>(glyphs1);
+    foreach (var (key, glyph) in glyphs2)
+    {
+        if (key < -1)
+        {
+            // Unmapped glyph from file2: assign a unique key to keep it.
+            merged[unmappedKey2--] = glyph;
+        }
+        else
+        {
+            merged.TryAdd(key, glyph);
+        }
+    }
+
+    try
+    {
+        using var writer = new StreamWriter(outputPath);
+
+        // Write header from file1, replacing the CHARS count with the merged total.
+        bool charsLineWritten = false;
+        foreach (var hLine in header1)
+        {
+            if (hLine.StartsWith("CHARS ", StringComparison.Ordinal))
+            {
+                writer.WriteLine($"CHARS {merged.Count}");
+                charsLineWritten = true;
+            }
+            else
+            {
+                writer.WriteLine(hLine);
+            }
+        }
+        // Guard: if the header had no CHARS line, emit one now.
+        if (!charsLineWritten)
+            writer.WriteLine($"CHARS {merged.Count}");
+
+        // Write glyphs: mapped (encoding >= 0) in ascending order, unmapped last.
+        // Partition once to avoid two passes over the dictionary.
+        var mappedGlyphs = new List<KeyValuePair<int, List<string>>>();
+        var unmappedGlyphs = new List<KeyValuePair<int, List<string>>>();
+        foreach (var entry in merged)
+        {
+            if (entry.Key >= 0)
+                mappedGlyphs.Add(entry);
+            else
+                unmappedGlyphs.Add(entry);
+        }
+        foreach (var glyphLines in mappedGlyphs.OrderBy(g => g.Key).Concat(unmappedGlyphs).Select(g => g.Value))
+        {
+            foreach (var gl in glyphLines)
+                writer.WriteLine(gl);
+        }
+
+        writer.WriteLine("ENDFONT");
+    }
+    catch (IOException ex)
+    {
+        Console.Error.WriteLine($"Error writing '{outputPath}': {ex.Message}");
+        return 1;
+    }
+
+    return 0;
+}
