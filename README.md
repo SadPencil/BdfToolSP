@@ -1,14 +1,12 @@
-# BdfToolSP — Special Pixel BDF Font Tool
+# BdfToolSP
 
 A command-line tool for processing [BDF (Bitmap Distribution Format)](https://en.wikipedia.org/wiki/Glyph_Bitmap_Distribution_Format) font files.
-
-**SP** stands for **Special Pixel** — fitting for a tool that works with pixel/bitmap fonts.
 
 ## Features
 
 - **Downgrade** BDF version 2.2 files to version 2.1
 - **Merge** two BDF 2.1 files into a single font file
-- **Rename** the font name (`FAMILY_NAME`, `FONT_NAME`, `FACE_NAME`) in the output
+- **Rename** the font name in the output
 
 ## Usage
 
@@ -70,24 +68,6 @@ BdfToolSP merge --font-name <name> <input1.bdf> <input2.bdf> <output.bdf>
 ```bash
 # Merge two fonts and name the result
 BdfToolSP merge --font-name "SimSun 14px" base.bdf extra.bdf merged.bdf
-```
-
----
-
-## Sample BDF Files
-
-Two example BDF 2.1 files are included in this repository:
-
-| File | Glyphs | Description |
-|---|---|---|
-| `MicrosoftSansSerif-14.bdf` | 4,416 | Microsoft Sans Serif, 14 px |
-| `simsun-14px-fontforge-21.bdf` | 28,431 | SimSun (Chinese), 14 px |
-
-You can try merging them:
-
-```bash
-BdfToolSP merge --font-name "SimSun 14px" \
-    MicrosoftSansSerif-14.bdf simsun-14px-fontforge-21.bdf merged.bdf
 ```
 
 ## Building
